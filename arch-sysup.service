@@ -1,0 +1,10 @@
+[Unit]
+Description=Arch-Sysup Update Notifier
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/arch-sysup-notifier
+Restart=always
+
+[Install]
+WantedBy=default.target
