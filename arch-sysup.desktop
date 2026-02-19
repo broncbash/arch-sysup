@@ -1,8 +1,9 @@
 [Desktop Entry]
 Name=Arch-Sysup
 Comment=Arch Linux System Manager
-Exec=python3 /home/ronb/Arch-Sysup-V2.py
+Exec=/usr/bin/arch-sysup
 Icon=arch-sysup
 Terminal=false
 Type=Application
 Categories=System;
+StartupNotify=true
