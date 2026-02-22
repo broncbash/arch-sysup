@@ -1226,8 +1226,19 @@ class SysUpApp(tk.Tk):
         if not messagebox.askyesno("Remove Orphans",
                                    f"Permanently remove {len(sel)} orphan package(s)?\n\n"+"\n".join(f"  • {p}" for p in sel),
                                    parent=self): return
-        pw=self._prompt_sudo(f"Enter sudo password to remove orphans:\n{', '.join(sel)}")
-        if pw is None: return
+        prompt=f"Enter sudo password to remove orphans:\n{', '.join(sel)}"
+        if self._sudo_pw and verify_sudo(self._sudo_pw):
+            pw=self._sudo_pw
+        else:
+            dlg=SudoDialog(self,prompt); self.wait_window(dlg)
+            if dlg.result is None: return
+            if not verify_sudo(dlg.result):
+                dlg2=SudoDialog(self,prompt); dlg2.show_error("Incorrect password. Please try again.")
+                self.wait_window(dlg2)
+                if not dlg2.result or not verify_sudo(dlg2.result): return
+                pw=dlg2.result
+            else:
+                pw=dlg.result
         self._sudo_pw=pw; self.orph_rem_btn.disable(); self.orph_scan_btn.disable()
         self._show_log(); self._log_clear()
         self._log_line(f"Removing {len(sel)} orphan(s)…",T["VER_OLD"])
