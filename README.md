@@ -1,5 +1,5 @@
 # arch-sysup
-GUI System Update Tool for Arch Linux
+GUI System Update Tool for Arch Linux.  Yay/Paru is detected and will update aur packages.
 I relied heavily on Claude and Gemini to make this as I am not a programmer.  I just wanted to have fun and make something useful for myself.  :)
 
 #Installation
@@ -8,5 +8,5 @@ I relied heavily on Claude and Gemini to make this as I am not a programmer.  I 
 3) Open terminal and cd into the new directory
 4) Type 'makepkg -si' and enter sudo password when prompted
 
-a .desktop file is created so it will show up in launchers
+A desktop file is created so it will show up in launchers
    
