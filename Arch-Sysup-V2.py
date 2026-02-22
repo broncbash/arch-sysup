@@ -709,8 +709,19 @@ class SysUpApp(tk.Tk):
     def _install_selected(self):
         to_inst=[r for r in self._get_checked() if not r["installed"]]
         if not to_inst: return
-        pw=self._prompt_sudo(f"Enter your sudo password to install:\n{', '.join(r['pkg'] for r in to_inst)}")
-        if pw is None: return
+        prompt=f"Enter your sudo password to install:\n{', '.join(r['pkg'] for r in to_inst)}"
+        if self._sudo_pw and verify_sudo(self._sudo_pw):
+            pw=self._sudo_pw
+        else:
+            dlg=SudoDialog(self,prompt); self.wait_window(dlg)
+            if dlg.result is None: return
+            if not verify_sudo(dlg.result):
+                dlg2=SudoDialog(self,prompt); dlg2.show_error("Incorrect password. Please try again.")
+                self.wait_window(dlg2)
+                if not dlg2.result or not verify_sudo(dlg2.result): return
+                pw=dlg2.result
+            else:
+                pw=dlg.result
         self._sudo_pw=pw; self.install_btn.disable(); self.uninstall_btn.disable()
         self._show_log(); self._log_clear()
         self._log_line(f"Installing {len(to_inst)} package(s)…",T["ACCENT"])
@@ -737,8 +748,19 @@ class SysUpApp(tk.Tk):
         if not messagebox.askyesno("Confirm Uninstall",
                                    f"Remove {len(names)} package(s)?\n\n"+"\n".join(f"  • {n}" for n in names),
                                    parent=self): return
-        pw=self._prompt_sudo(f"Enter your sudo password to remove:\n{', '.join(names)}")
-        if pw is None: return
+        prompt=f"Enter your sudo password to remove:\n{', '.join(names)}"
+        if self._sudo_pw and verify_sudo(self._sudo_pw):
+            pw=self._sudo_pw
+        else:
+            dlg=SudoDialog(self,prompt); self.wait_window(dlg)
+            if dlg.result is None: return
+            if not verify_sudo(dlg.result):
+                dlg2=SudoDialog(self,prompt); dlg2.show_error("Incorrect password. Please try again.")
+                self.wait_window(dlg2)
+                if not dlg2.result or not verify_sudo(dlg2.result): return
+                pw=dlg2.result
+            else:
+                pw=dlg.result
         self._sudo_pw=pw; self.install_btn.disable(); self.uninstall_btn.disable()
         self._show_log(); self._log_clear()
         self._log_line(f"Removing {len(names)} package(s)…",T["VER_OLD"])
