@@ -174,7 +174,7 @@ class SudoDialog(tk.Toplevel):
         self.title("Authentication Required")
         self.configure(bg=T["BG"])
         self.geometry("440x230"); self.resizable(False,False)
-        self.grab_set(); self.transient(parent)
+        self.transient(parent)
         tk.Label(self,text="🔒  Authentication Required",font=MONO_B,bg=T["BG"],fg=T["ACCENT"]).pack(pady=(22,4))
         tk.Label(self,text=prompt,font=MONO_S,bg=T["BG"],fg=T["FG"],wraplength=390,justify="center").pack(pady=(0,12))
         ef=tk.Frame(self,bg=T["BG"]); ef.pack()
@@ -189,6 +189,7 @@ class SudoDialog(tk.Toplevel):
         _make_btn(br,"  Authenticate  ",self._submit,"BTN_GREEN","BTN_GREEN_H","#ffffff").pack(side="left",padx=(0,10))
         _make_btn(br,"  Cancel  ",self._cancel,"BTN_BG","BTN_HOVER").pack(side="left")
         self.protocol("WM_DELETE_WINDOW",self._cancel)
+        self.update_idletasks(); self.grab_set()
     def _submit(self): self.result=self._entry.get(); self.destroy()
     def _cancel(self): self.result=None; self.destroy()
     def show_error(self,msg): self._err.config(text=msg); self._entry.delete(0,"end"); self._entry.focus_set()
@@ -489,9 +490,24 @@ class SysUpApp(tk.Tk):
 
     def _run_updates(self):
         if not self.updates: return
-        pw=self._prompt_sudo("Enter your sudo password to begin updating:")
-        if pw is None: return
-        self._sudo_pw=pw; self.update_btn.disable(); self.refresh_btn.disable()
+        # Collect the sudo password on the main thread (avoids deadlock from
+        # blocking done.wait() while the Tk event loop also needs the main thread)
+        if self._sudo_pw and verify_sudo(self._sudo_pw):
+            pw = self._sudo_pw
+        else:
+            dlg = SudoDialog(self, "Enter your sudo password to begin updating:")
+            self.wait_window(dlg)
+            if dlg.result is None: return
+            if not verify_sudo(dlg.result):
+                dlg2 = SudoDialog(self, "Enter your sudo password to begin updating:")
+                dlg2.show_error("Incorrect password. Please try again.")
+                self.wait_window(dlg2)
+                if not dlg2.result or not verify_sudo(dlg2.result): return
+                pw = dlg2.result
+            else:
+                pw = dlg.result
+        self._sudo_pw = pw
+        self.update_btn.disable(); self.refresh_btn.disable()
         self._show_log(); self._log_clear()
         threading.Thread(target=self._do_updates,daemon=True).start()
 
@@ -1304,8 +1320,21 @@ class SysUpApp(tk.Tk):
         ne.focus_set(); se.bind("<Return>",lambda e:do_add())
 
     def _save_repo_changes(self):
-        pw=self._prompt_sudo("Enter your sudo password to write /etc/pacman.conf:")
-        if pw is None: return
+        # Collect the sudo password on the main thread (same fix as _run_updates)
+        if self._sudo_pw and verify_sudo(self._sudo_pw):
+            pw = self._sudo_pw
+        else:
+            dlg = SudoDialog(self, "Enter your sudo password to write /etc/pacman.conf:")
+            self.wait_window(dlg)
+            if dlg.result is None: return
+            if not verify_sudo(dlg.result):
+                dlg2 = SudoDialog(self, "Enter your sudo password to write /etc/pacman.conf:")
+                dlg2.show_error("Incorrect password. Please try again.")
+                self.wait_window(dlg2)
+                if not dlg2.result or not verify_sudo(dlg2.result): return
+                pw = dlg2.result
+            else:
+                pw = dlg.result
         self._sudo_pw=pw
         new_conf=write_pacman_conf(self._repo_preamble,self._repo_sections)
         self._show_log(); self._log_clear()
