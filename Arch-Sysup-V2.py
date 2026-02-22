@@ -1770,9 +1770,56 @@ class SysUpApp(tk.Tk):
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
+def _set_window_icon(app):
+    """Try to set the titlebar icon from the installed SVG, failing silently."""
+    svg_path = "/usr/share/icons/hicolor/scalable/apps/arch-sysup.svg"
+    # Also accept the icon next to the script for dev use
+    import os
+    if not os.path.exists(svg_path):
+        svg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "arch-sysup.svg")
+    if not os.path.exists(svg_path):
+        return
+    png_data = None
+    # Method 1: cairosvg (pip install cairosvg)
+    try:
+        import cairosvg, io
+        png_data = cairosvg.svg2png(url=svg_path, output_width=64, output_height=64)
+    except Exception:
+        pass
+    # Method 2: rsvg-convert CLI tool (pacman -S librsvg)
+    if png_data is None:
+        try:
+            result = subprocess.run(
+                ["rsvg-convert", "-w", "64", "-h", "64", "-f", "png", svg_path],
+                capture_output=True, timeout=5)
+            if result.returncode == 0:
+                png_data = result.stdout
+        except Exception:
+            pass
+    if png_data is None:
+        return
+    try:
+        import io
+        from PIL import Image, ImageTk
+        img = Image.open(io.BytesIO(png_data))
+        photo = ImageTk.PhotoImage(img)
+        app.iconphoto(True, photo)
+        app._icon_ref = photo  # prevent garbage collection
+    except Exception:
+        # Fallback: use tkinter's built-in PhotoImage (PNG only, no PIL needed)
+        try:
+            import io, base64, tkinter as tk
+            b64 = base64.b64encode(png_data).decode()
+            photo = tk.PhotoImage(data=b64)
+            app.iconphoto(True, photo)
+            app._icon_ref = photo
+        except Exception:
+            pass
+
 if __name__=="__main__":
     app=SysUpApp()
     style=ttk.Style(app); style.theme_use("clam")
     style.configure("Vertical.TScrollbar",background=T["BTN_BG"],troughcolor=T["BG_PANEL"],
                     arrowcolor=T["FG_DIM"],bordercolor=T["BORDER"])
+    _set_window_icon(app)
     app.mainloop()
