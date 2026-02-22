@@ -324,7 +324,7 @@ class SysUpApp(tk.Tk):
         self.tab_bar=self._tw(tk.Frame(self,bg=T["BG_PANEL"]),bg="BG_PANEL")
         self.tab_bar.pack(fill="x")
         self._tab_btns={}; self._pages={}; self._active_tab=None
-        TABS=("Updates","Search & Install","Package Info","System Stats","Orphans","Repositories")
+        TABS=("Updates","Search & Install","Package Info","System Stats","Orphans","Repositories","Mirrors")
         for name in TABS:
             b=tk.Label(self.tab_bar,text=name,font=MONO_B,bg=T["BG_PANEL"],fg=T["FG_DIM"],
                        padx=16,pady=10,cursor="hand2")
@@ -342,6 +342,7 @@ class SysUpApp(tk.Tk):
         self._build_stats_page()
         self._build_orphans_page()
         self._build_repos_page()
+        self._build_mirrors_page()
 
         # Shared log
         self._tw(tk.Frame(self,bg=T["BORDER"],height=1),bg="BORDER").pack(fill="x")
@@ -368,11 +369,12 @@ class SysUpApp(tk.Tk):
         if name=="Repositories": self._reload_repos_view()
         if name=="Orphans":      self._scan_orphans()
         if name=="System Stats": self._refresh_stats()
+        if name=="Mirrors":      self._load_mirror_conf()
 
     def _setup_scroll(self):
         _canvases={"Updates":"upd_canvas","Search & Install":"src_canvas",
                    "Package Info":"info_canvas","Orphans":"orph_canvas",
-                   "Repositories":"repo_canvas"}
+                   "Repositories":"repo_canvas","Mirrors":"mir_canvas"}
         def _get():
             c=_canvases.get(self._active_tab)
             return getattr(self,c,None) if c else None
@@ -1386,6 +1388,329 @@ class SysUpApp(tk.Tk):
                 self.after(0,self._reload_repos_view)
             else: self._log_line(f"✗ Failed:\n{out}",T["VER_OLD"])
         threading.Thread(target=_write,daemon=True).start()
+
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # MIRRORS TAB
+    # ══════════════════════════════════════════════════════════════════════════
+    REFLECTOR_CONF = "/etc/xdg/reflector/reflector.conf"
+
+    def _build_mirrors_page(self):
+        page=self._tw(tk.Frame(self.page_container,bg=T["BG"]),bg="BG")
+        self._pages["Mirrors"]=page
+
+        # Scrollable canvas
+        outer=self._tw(tk.Frame(page,bg=T["BG_PANEL"]),bg="BG_PANEL")
+        outer.pack(fill="both",expand=True)
+        self.mir_canvas=self._tw(tk.Canvas(outer,bg=T["BG_PANEL"],highlightthickness=0,bd=0),bg="BG_PANEL")
+        msb=ttk.Scrollbar(outer,orient="vertical",command=self.mir_canvas.yview)
+        self.mir_canvas.configure(yscrollcommand=msb.set)
+        msb.pack(side="right",fill="y"); self.mir_canvas.pack(side="left",fill="both",expand=True)
+        inner=self._tw(tk.Frame(self.mir_canvas,bg=T["BG_PANEL"]),bg="BG_PANEL")
+        mir_win=self.mir_canvas.create_window((0,0),window=inner,anchor="nw")
+        inner.bind("<Configure>",lambda e:self.mir_canvas.configure(scrollregion=self.mir_canvas.bbox("all")))
+        self.mir_canvas.bind("<Configure>",lambda e:self.mir_canvas.itemconfig(mir_win,width=e.width))
+
+        def section(parent, title):
+            self._tw(tk.Label(parent,text=title,font=MONO_SB,bg=T["BG_PANEL"],fg=T["ACCENT"],anchor="w"),
+                     bg="BG_PANEL",fg="ACCENT").pack(fill="x",padx=24,pady=(18,4))
+            self._tw(tk.Frame(parent,bg=T["BORDER"],height=1),bg="BORDER").pack(fill="x",padx=24)
+
+        def row_frame(parent):
+            f=self._tw(tk.Frame(parent,bg=T["BG_PANEL"]),bg="BG_PANEL")
+            f.pack(fill="x",padx=32,pady=4)
+            return f
+
+        def lbl(parent, text, width=26):
+            l=self._tw(tk.Label(parent,text=text,font=MONO,bg=T["BG_PANEL"],fg=T["FG"],
+                                width=width,anchor="w"),bg="BG_PANEL",fg="FG")
+            l.pack(side="left")
+            return l
+
+        def entry_box(parent, var, width=8, hint=""):
+            """Bordered entry widget matching the search box style, with optional hint."""
+            ew=self._tw(tk.Frame(parent,bg=T["BG_INPUT"],highlightthickness=1,
+                                 highlightbackground=T["BORDER"],highlightcolor=T["ACCENT"]),
+                        bg="BG_INPUT",highlightbackground="BORDER",highlightcolor="ACCENT")
+            ew.pack(side="left",padx=(0,8))
+            e=tk.Entry(ew,textvariable=var,font=MONO,bg=T["BG_INPUT"],fg=T["FG"],
+                       insertbackground=T["FG"],relief="flat",bd=0,width=width)
+            self._tw(e,bg="BG_INPUT",fg="FG")
+            e.pack(side="left",ipady=5,padx=(6,6))
+            if hint:
+                self._tw(tk.Label(parent,text=hint,font=MONO_S,bg=T["BG_PANEL"],fg=T["FG_DIM"]),
+                         bg="BG_PANEL",fg="FG_DIM").pack(side="left")
+
+        # ── Country ──────────────────────────────────────────────────────────
+        section(inner,"Country / Region")
+        rf=row_frame(inner); lbl(rf,"Countries:")
+        self.mir_country_var=tk.StringVar()
+        entry_box(rf,self.mir_country_var,width=34,hint="e.g. US,GB,DE  (leave blank for all)")
+
+        # ── Protocol ─────────────────────────────────────────────────────────
+        section(inner,"Protocol")
+        pf=row_frame(inner)
+        self.mir_proto_https=tk.BooleanVar(value=True)
+        self.mir_proto_http =tk.BooleanVar(value=False)
+        for var,txt in [(self.mir_proto_https,"https"),(self.mir_proto_http,"http")]:
+            cb=self._make_checkbox(pf,var,"BG_PANEL",lambda:None)
+            cb.pack(side="left",padx=(0,4))
+            self._tw(tk.Label(pf,text=txt,font=MONO,bg=T["BG_PANEL"],fg=T["FG"]),
+                     bg="BG_PANEL",fg="FG").pack(side="left",padx=(0,18))
+
+        # ── Sort ─────────────────────────────────────────────────────────────
+        section(inner,"Sort By")
+        sf2=row_frame(inner)
+        self.mir_sort_var=tk.StringVar(value="rate")
+        for val,txt in [("rate","Download Rate"),("score","Mirror Score"),
+                        ("delay","Sync Delay"),("age","Last Sync Age"),("country","Country")]:
+            rb=tk.Radiobutton(sf2,text=txt,variable=self.mir_sort_var,value=val,
+                              font=MONO,bg=T["BG_PANEL"],fg=T["FG"],
+                              selectcolor=T["BTN_ACCENT"],activebackground=T["BG_PANEL"],
+                              activeforeground=T["FG"],relief="flat",bd=0,cursor="hand2")
+            self._tw(rb,bg="BG_PANEL",fg="FG"); rb.pack(side="left",padx=(0,16))
+
+        # ── Number of mirrors ────────────────────────────────────────────────
+        section(inner,"Number of Mirrors")
+        nf=row_frame(inner); lbl(nf,"Latest N mirrors:")
+        self.mir_num_var=tk.StringVar(value="5")
+        entry_box(nf,self.mir_num_var,width=5,hint="select from N most recently synced")
+
+        # ── Age ──────────────────────────────────────────────────────────────
+        section(inner,"Maximum Mirror Age")
+        af2=row_frame(inner); lbl(af2,"Maximum age:")
+        self.mir_age_var=tk.StringVar(value="12")
+        entry_box(af2,self.mir_age_var,width=5,hint="hours since last sync")
+
+        # ── Connection timeout ────────────────────────────────────────────────
+        section(inner,"Connection Timeout")
+        tf=row_frame(inner); lbl(tf,"Connection timeout:")
+        self.mir_timeout_var=tk.StringVar(value="5")
+        entry_box(tf,self.mir_timeout_var,width=5,hint="seconds")
+
+        # ── Extra flags ───────────────────────────────────────────────────────
+        section(inner,"Extra Options")
+        ef2=row_frame(inner)
+        self.mir_ipv4=tk.BooleanVar(value=False)
+        self.mir_ipv6=tk.BooleanVar(value=False)
+        self.mir_download_timeout_var=tk.StringVar(value="")
+        for var,txt in [(self.mir_ipv4,"IPv4 only"),(self.mir_ipv6,"IPv6 only")]:
+            cb=self._make_checkbox(ef2,var,"BG_PANEL",lambda:None)
+            cb.pack(side="left",padx=(0,4))
+            self._tw(tk.Label(ef2,text=txt,font=MONO,bg=T["BG_PANEL"],fg=T["FG"]),
+                     bg="BG_PANEL",fg="FG").pack(side="left",padx=(0,18))
+
+        # ── Status / info ─────────────────────────────────────────────────────
+        self._tw(tk.Frame(inner,bg=T["BORDER"],height=1),bg="BORDER").pack(fill="x",padx=24,pady=(18,0))
+        self.mir_status_lbl=self._tw(tk.Label(inner,text="",font=MONO_S,bg=T["BG_PANEL"],fg=T["FG_DIM"],anchor="w"),
+                                     bg="BG_PANEL",fg="FG_DIM")
+        self.mir_status_lbl.pack(fill="x",padx=24,pady=(6,0))
+
+        # ── Bottom button bar ─────────────────────────────────────────────────
+        self._tw(tk.Frame(page,bg=T["BORDER"],height=1),bg="BORDER").pack(fill="x")
+        bot=self._tw(tk.Frame(page,bg=T["BG"],pady=10),bg="BG"); bot.pack(fill="x",padx=24)
+        self.mir_dirty_lbl=self._tw(tk.Label(bot,text="",font=MONO_S,bg=T["BG"],fg=T["FG_DIM"]),
+                                    bg="BG",fg="FG_DIM")
+        self.mir_dirty_lbl.pack(side="left")
+        br=self._tw(tk.Frame(bot,bg=T["BG"]),bg="BG"); br.pack(side="right")
+        self.mir_save_btn=_make_btn(br,"  💾  Save Config  ",self._save_mirror_conf,"BTN_ACCENT","BTN_ACCT_H","#ffffff")
+        self.mir_save_btn.pack(side="left",padx=(0,8)); self._tw(self.mir_save_btn)
+        self.mir_run_btn=_make_btn(br,"  ▶  Run Reflector Now  ",self._run_reflector,"BTN_GREEN","BTN_GREEN_H","#ffffff")
+        self.mir_run_btn.pack(side="left"); self._tw(self.mir_run_btn)
+
+        # Watch for any changes to mark dirty
+        for var in (self.mir_country_var,self.mir_proto_https,self.mir_proto_http,
+                    self.mir_sort_var,self.mir_num_var,self.mir_age_var,
+                    self.mir_timeout_var,self.mir_ipv4,self.mir_ipv6):
+            var.trace_add("write",self._mir_mark_dirty)
+        self._mir_dirty=False
+
+    def _mir_mark_dirty(self, *_):
+        self._mir_dirty=True
+        self.mir_dirty_lbl.config(text="● Unsaved changes",fg=T["BTN_ORANGE"])
+
+    def _load_mirror_conf(self):
+        """Read reflector.conf and populate UI widgets."""
+        path=self.REFLECTOR_CONF
+        self._mir_dirty=False
+        self.mir_dirty_lbl.config(text="")
+        # Defaults
+        self.mir_country_var.set("")
+        self.mir_proto_https.set(True); self.mir_proto_http.set(False)
+        self.mir_sort_var.set("rate")
+        self.mir_num_var.set("5")
+        self.mir_age_var.set("12")
+        self.mir_timeout_var.set("5")
+        self.mir_ipv4.set(False); self.mir_ipv6.set(False)
+        try:
+            with open(path) as f: lines=f.readlines()
+        except (FileNotFoundError,PermissionError):
+            self.mir_status_lbl.config(text=f"ℹ  {path} not found — showing defaults.",fg=T["FG_DIM"])
+            return
+        # Temporarily detach traces so loading doesn't mark dirty
+        proto_https,proto_http=False,False
+        for line in lines:
+            line=line.strip()
+            if not line or line.startswith("#"): continue
+            if line.startswith("--country"):
+                val=re.sub(r"^--country\s*","",line).strip()
+                self.mir_country_var.set(val)
+            elif line.startswith("--protocol"):
+                val=re.sub(r"^--protocol\s*","",line).strip()
+                proto_https="https" in val; proto_http="http" in val and "https" not in val
+            elif line.startswith("--sort"):
+                val=re.sub(r"^--sort\s*","",line).strip()
+                self.mir_sort_var.set(val)
+            elif line.startswith("--latest"):
+                val=re.sub(r"^--latest\s*","",line).strip()
+                if val: self.mir_num_var.set(val)
+            elif line.startswith("--age"):
+                val=re.sub(r"^--age\s*","",line).strip()
+                if val: self.mir_age_var.set(val)
+            elif line.startswith("--connection-timeout"):
+                val=re.sub(r"^--connection-timeout\s*","",line).strip()
+                if val: self.mir_timeout_var.set(val)
+            elif line=="--ipv4": self.mir_ipv4.set(True)
+            elif line=="--ipv6": self.mir_ipv6.set(True)
+        self.mir_proto_https.set(proto_https or (not proto_http))
+        self.mir_proto_http.set(proto_http)
+        self._mir_dirty=False
+        self.mir_dirty_lbl.config(text="")
+        self.mir_status_lbl.config(text=f"✓  Loaded from {path}",fg=T["VER_NEW"])
+
+    # Options this UI manages — any other lines in the conf are preserved as-is
+    _MIR_MANAGED = ("--country","--protocol","--sort","--latest","--age",
+                    "--connection-timeout","--ipv4","--ipv6")
+
+    def _build_reflector_conf(self):
+        """Merge UI-controlled options into the existing conf, preserving unmanaged lines."""
+        NL = "\n"
+        # Read existing file so unmanaged options (e.g. --save) are kept
+        try:
+            with open(self.REFLECTOR_CONF) as f:
+                existing = f.readlines()
+        except (FileNotFoundError, PermissionError):
+            existing = []
+
+        # Strip lines we manage (will be re-added below with current values)
+        kept = []
+        for line in existing:
+            s = line.strip()
+            if not s or s.startswith("#"):
+                kept.append(line); continue
+            if any(s == opt or s.startswith(opt + " ") for opt in self._MIR_MANAGED):
+                continue  # will be replaced by UI values
+            kept.append(line)
+
+        # Build the managed section
+        managed = []
+        country = self.mir_country_var.get().strip()
+        if country: managed.append("--country " + country + NL)
+        protos = []
+        if self.mir_proto_https.get(): protos.append("https")
+        if self.mir_proto_http.get():  protos.append("http")
+        if protos: managed.append("--protocol " + ",".join(protos) + NL)
+        sort = self.mir_sort_var.get().strip()
+        if sort: managed.append("--sort " + sort + NL)
+        num = self.mir_num_var.get().strip()
+        if num.isdigit(): managed.append("--latest " + num + NL)
+        age = self.mir_age_var.get().strip()
+        if age: managed.append("--age " + age + NL)
+        timeout = self.mir_timeout_var.get().strip()
+        if timeout: managed.append("--connection-timeout " + timeout + NL)
+        if self.mir_ipv4.get(): managed.append("--ipv4" + NL)
+        if self.mir_ipv6.get(): managed.append("--ipv6" + NL)
+
+        return "".join(kept + managed)
+
+    def _save_mirror_conf(self):
+        path=self.REFLECTOR_CONF
+        new_conf=self._build_reflector_conf()
+        if self._sudo_pw and verify_sudo(self._sudo_pw):
+            pw=self._sudo_pw
+        else:
+            dlg=SudoDialog(self,f"Enter your sudo password to write {path}:")
+            self.wait_window(dlg)
+            if dlg.result is None: return
+            if not verify_sudo(dlg.result):
+                dlg2=SudoDialog(self,f"Enter your sudo password to write {path}:")
+                dlg2.show_error("Incorrect password. Please try again.")
+                self.wait_window(dlg2)
+                if not dlg2.result or not verify_sudo(dlg2.result): return
+                pw=dlg2.result
+            else:
+                pw=dlg.result
+        self._sudo_pw=pw
+        self._show_log(); self._log_clear()
+        self._log_line(f"Writing {path}…",T["ACCENT"])
+        def _write():
+            import tempfile, os
+            # Write to a temp file first, then sudo cp — avoids password leaking into the target file
+            try:
+                with tempfile.NamedTemporaryFile(mode="w",suffix=".conf",delete=False) as tf:
+                    tf.write(new_conf); tmp=tf.name
+            except Exception as e:
+                self._log_line(f"✗ Failed to create temp file: {e}",T["VER_OLD"]); return
+            proc=run_sudo_cmd(self._sudo_pw,["cp",tmp,path])
+            proc.wait()
+            try: os.unlink(tmp)
+            except Exception: pass
+            if proc.returncode==0:
+                self._log_line(f"✓ {path} saved.",T["VER_NEW"])
+                self.after(0,lambda:self.mir_dirty_lbl.config(text=""))
+                self.after(0,lambda:self.mir_status_lbl.config(text=f"✓  Saved to {path}",fg=T["VER_NEW"]))
+                self._mir_dirty=False
+            else:
+                self._log_line("✗ Failed to write config.",T["VER_OLD"])
+        threading.Thread(target=_write,daemon=True).start()
+
+    def _run_reflector(self):
+        if not shutil.which("reflector"):
+            messagebox.showerror("Not Found","reflector is not installed.\nInstall it with: sudo pacman -S reflector",parent=self)
+            return
+        if self._sudo_pw and verify_sudo(self._sudo_pw):
+            pw=self._sudo_pw
+        else:
+            dlg=SudoDialog(self,"Enter your sudo password to run reflector:")
+            self.wait_window(dlg)
+            if dlg.result is None: return
+            if not verify_sudo(dlg.result):
+                dlg2=SudoDialog(self,"Enter your sudo password to run reflector:")
+                dlg2.show_error("Incorrect password. Please try again.")
+                self.wait_window(dlg2)
+                if not dlg2.result or not verify_sudo(dlg2.result): return
+                pw=dlg2.result
+            else:
+                pw=dlg.result
+        self._sudo_pw=pw
+        self.mir_run_btn.disable(); self.mir_save_btn.disable()
+        self._show_log(); self._log_clear()
+        self._log_line("Running reflector — this may take a minute…",T["ACCENT"])
+        def _run():
+            # Build the reflector command by parsing the conf file options directly,
+            # so we are not relying on reflector's --config flag (not all versions support it).
+            # Always append --save to write the mirrorlist.
+            cmd_args=["reflector"]
+            try:
+                with open(self.REFLECTOR_CONF) as f:
+                    for line in f:
+                        s=line.strip()
+                        if s and not s.startswith("#"):
+                            parts=s.split(None,1)
+                            cmd_args.append(parts[0])
+                            if len(parts)>1: cmd_args.append(parts[1])
+            except (FileNotFoundError,PermissionError):
+                self._log_line("Warning: could not read conf file — running with defaults.",T["VER_OLD"])
+            if "--save" not in cmd_args:
+                cmd_args+=["--save","/etc/pacman.d/mirrorlist"]
+            self._log_line("Command: "+" ".join(cmd_args),T["FG_DIM"])
+            self._stream_sudo(cmd_args)
+            self._log_line("✓ Mirrorlist updated.",T["VER_NEW"])
+            self.after(0,self.mir_run_btn.enable)
+            self.after(0,self.mir_save_btn.enable)
+            self.after(0,lambda:self.mir_status_lbl.config(
+                text="✓  Reflector ran successfully — /etc/pacman.d/mirrorlist updated.",fg=T["VER_NEW"]))
+        threading.Thread(target=_run,daemon=True).start()
 
     # ══════════════════════════════════════════════════════════════════════════
     # SHARED UTILITIES
