@@ -37,6 +37,7 @@ The following packages are required and will be pulled in automatically when ins
 
 | Package | Purpose |
 |---|---|
+| 'reflector' | if wanting to use the 'mirror' tab to configure and update |
 | `yay` | AUR helper — used if present |
 | `paru` | AUR helper — used if `yay` is not found |
 
