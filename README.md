@@ -55,7 +55,7 @@ The following packages are required and will be pulled in automatically when ins
 
 2. Download the PKGBUILD:
    ```bash
-   curl -O https://raw.githubusercontent.com/rbalch73/arch-sysup/main/PKGBUILD
+   curl -O https://raw.githubusercontent.com/broncbash/arch-sysup/main/PKGBUILD
    ```
 
 3. Build and install the package:
